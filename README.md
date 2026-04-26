@@ -167,7 +167,7 @@ When working on a new agent:
 
 ## Team
 
-CS 175, Spring 2026 — Group _[fill in]_.
+CS 175, Spring 2026 — Group 9.
 
 ## License
 
