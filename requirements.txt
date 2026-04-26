@@ -1,0 +1,5 @@
+numpy>=1.24
+gymnasium>=0.29
+pytest>=7.4
+# Optional, only needed for the DQN baseline:
+# torch>=2.0
