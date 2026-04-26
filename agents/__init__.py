@@ -2,14 +2,14 @@ from .base import Agent
 from .random_agent import RandomAgent
 from .csp_agent import CSPAgent
 from .probability_agent import ProbabilityAgent
-from .hybrid_agent import HybridAgent
+from .final_agent import FinalAgent
 
 AGENT_REGISTRY = {
     "random": RandomAgent,
     "csp": CSPAgent,
     "probability": ProbabilityAgent,
-    "hybrid": HybridAgent,
+    "final": FinalAgent,
 }
 
 __all__ = ["Agent", "RandomAgent", "CSPAgent", "ProbabilityAgent",
-           "HybridAgent", "AGENT_REGISTRY"]
+           "FinalAgent", "AGENT_REGISTRY"]

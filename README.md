@@ -37,7 +37,7 @@ python -m scripts.benchmark --agent csp --difficulty intermediate --episodes 100
 - `random` — picks any unrevealed cell. Floor baseline.
 - `csp` — constraint-subset reasoning; random fallback when stuck.
 - `probability` — exact frontier enumeration; picks min-mine-probability cell.
-- `hybrid` — CSP first, probability when no certain move exists.
+- `final` — placeholder for the project's final agent (not implemented yet).
 - `dqn` — CNN Double-DQN (training script in `scripts/train_dqn.py`).
 
 ## Targets
