@@ -26,10 +26,12 @@ class SinglePointAgent(Agent):
         self._pending_safe: list[tuple[int, int]] = []
         self._pending_flag: list[tuple[int, int]] = []
         self._first_move = True
+        self.last_reason: str = ""
 
     def act(self, view: np.ndarray) -> Action:
         if self._first_move:
             self._first_move = False
+            self.last_reason = "first move (center)"
             return ("reveal", self.h // 2, self.w // 2)
 
         if not self._pending_safe and not self._pending_flag:
@@ -38,11 +40,13 @@ class SinglePointAgent(Agent):
         while self._pending_flag:
             r, c = self._pending_flag.pop()
             if view[r, c] == int(CellState.UNREVEALED):
+                self.last_reason = "single-point rule 2: must be a mine"
                 return ("flag", r, c)
 
         while self._pending_safe:
             r, c = self._pending_safe.pop()
             if view[r, c] == int(CellState.UNREVEALED):
+                self.last_reason = "single-point rule 1: must be safe"
                 return ("reveal", r, c)
 
         return self._fallback(view)
@@ -86,6 +90,7 @@ class SinglePointAgent(Agent):
         cells = self.unrevealed_cells(view)
         if not cells:
             return ("reveal", 0, 0)
+        self.last_reason = "random fallback (single-point stuck)"
         idx = int(self.rng.integers(len(cells)))
         r, c = cells[idx]
         return ("reveal", r, c)
