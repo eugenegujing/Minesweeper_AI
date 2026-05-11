@@ -52,11 +52,11 @@ class CSPAgent(Agent):
         if not self._pending_safe and not self._pending_flag:
             self._infer(view)
 
-        if self._pending_flag:
+        while self._pending_flag:
             r, c = self._pending_flag.pop()
             if view[r, c] == int(CellState.UNREVEALED):
                 return ("flag", r, c)
-        if self._pending_safe:
+        while self._pending_safe:
             r, c = self._pending_safe.pop()
             if view[r, c] == int(CellState.UNREVEALED):
                 return ("reveal", r, c)
