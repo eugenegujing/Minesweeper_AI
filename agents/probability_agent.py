@@ -258,6 +258,7 @@ class ProbabilityAgent(CSPAgent):
         if not probabilities:
             return super()._fallback(view)
 
+        self.last_was_guess = True
         self.last_probabilities = probabilities
         action = self._select_cell(probabilities, frontier_cells)
         _, r, c = action

@@ -24,9 +24,13 @@ class Agent(ABC):
         self.w = width
         self.n_mines = n_mines
         self.rng = rng if rng is not None else np.random.default_rng()
+        self.last_was_guess: bool = False
+        self.last_reason: str = ""
 
     def reset(self) -> None:
         """Called at the start of each episode. Override to clear internal state."""
+        self.last_was_guess = False
+        self.last_reason = ""
 
     @abstractmethod
     def act(self, view: np.ndarray) -> Action:

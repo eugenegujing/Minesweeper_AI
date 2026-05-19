@@ -23,12 +23,13 @@ class SinglePointAgent(Agent):
     name = "single_point"
 
     def reset(self) -> None:
+        super().reset()
         self._pending_safe: list[tuple[int, int]] = []
         self._pending_flag: list[tuple[int, int]] = []
         self._first_move = True
-        self.last_reason: str = ""
 
     def act(self, view: np.ndarray) -> Action:
+        self.last_was_guess = False
         if self._first_move:
             self._first_move = False
             self.last_reason = "first move (center)"
@@ -90,6 +91,7 @@ class SinglePointAgent(Agent):
         cells = self.unrevealed_cells(view)
         if not cells:
             return ("reveal", 0, 0)
+        self.last_was_guess = True
         self.last_reason = "random fallback (single-point stuck)"
         idx = int(self.rng.integers(len(cells)))
         r, c = cells[idx]

@@ -10,6 +10,8 @@ class RandomAgent(Agent):
     name = "random"
 
     def act(self, view: np.ndarray) -> Action:
+        self.last_was_guess = True
+        self.last_reason = "random"
         cells = self.unrevealed_cells(view)
         if not cells:
             return ("reveal", 0, 0)
