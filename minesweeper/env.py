@@ -81,7 +81,8 @@ class MinesweeperEnv(gym.Env if _HAS_GYM else object):
         terminated = self.board.lost or self.board.won
         truncated = self._steps >= self.max_steps and not terminated
         info = {"won": self.board.won, "lost": self.board.lost,
-                "n_remaining": self.board.n_remaining}
+                "n_remaining": self.board.n_remaining,
+                "n_revealed_safe": self.board.n_revealed_safe}
         return self.board.view(), reward, terminated, truncated, info
 
     def render(self):

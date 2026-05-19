@@ -49,10 +49,7 @@ def run_episode(env: MinesweeperEnv, agent: Agent,
             return EpisodeResult(
                 won=won,
                 steps=steps,
-                cells_revealed=int(
-                    env.h * env.w - env.n_mines
-                    - info.get("n_remaining", 0)
-                ),
+                cells_revealed=int(info.get("n_revealed_safe", 0)),
                 guess_count=guess_count,
                 total_time_s=total_time,
                 loss_was_guess=last_was_guess if lost else None,

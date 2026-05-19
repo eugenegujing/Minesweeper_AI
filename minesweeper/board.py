@@ -174,6 +174,13 @@ class Board:
         return int((~self._revealed & ~self._flagged).sum())
 
     @property
+    def n_revealed_safe(self) -> int:
+        """Number of revealed cells that are not mines. On a loss, the killing
+        mine is revealed but not counted here, so this is a clean 'progress made'
+        metric independent of how many mines the agent flagged."""
+        return int((self._revealed & ~self._mines).sum())
+
+    @property
     def n_flags(self) -> int:
         return int(self._flagged.sum())
 
