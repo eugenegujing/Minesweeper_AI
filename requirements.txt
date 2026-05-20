@@ -3,5 +3,5 @@ gymnasium>=0.29
 pytest>=7.4
 matplotlib>=3.7
 imageio>=2.31
-# Optional, only needed for the DQN baseline:
-# torch>=2.0
+# Required for the DQN agent:
+torch>=2.0
