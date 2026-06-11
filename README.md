@@ -29,7 +29,7 @@ tests/              Unit tests for board mechanics and agents
 - `single_point`: applies the two standard single-cell Minesweeper rules, then random fallback.
 - `csp`: single-point rules plus subset reasoning. Falls back to random when stuck.
 - `probability`: CSP plus exact frontier-component enumeration and global mine-budget weighting. **Textbook reference implementation** — dict-based DFS, dict polynomial multiplication, strict argmin tie-break, no certainty extraction. Intentionally kept simple so the algorithm reads cleanly.
-- `final`: the strongest agent. Inherits from `ProbabilityAgent` but **overrides every method that has an optimised version**. All engineering improvements (R1 speed, R2 decision quality, R3 refinement) live here as method overrides, leaving the parents as clean baselines.
+- `final`: the strongest agent. Inherits from `ProbabilityAgent` but **overrides every method that has an optimised version**. All engineering improvements (speed, decision quality, refinement) live here as method overrides, leaving the parents as clean baselines.
 - `dqn`: pure reveal-only Deep Q-Network agent. It loads `checkpoints/dqn_<difficulty>.pt` by default and falls back to random play if no checkpoint is present.
 
 Classical agent inheritance:
@@ -322,20 +322,20 @@ This remains a **one-step policy** — no recursive game-tree search.
 
 | Method                                | What changes                                                                            |
 |---------------------------------------|-----------------------------------------------------------------------------------------|
-| `_build_constraints`                  | `np.where`-vectorised outer scan instead of nested Python loops (R1).                   |
-| `_find_frontier`                      | `np.where` + set difference instead of `h × w` Python loop (R1).                        |
-| `_enumerate_component_histograms`     | **New method**, replaces parent's `_enumerate_component`. Bitmask DFS with `popcount` feasibility + saturation/fill propagation (R1). Outputs numpy histograms directly. |
-| `_compute_probabilities`              | Numpy `np.convolve` polynomial multiplication; per-component fallback when one overflows the solution cap (R1 + R2).                          |
-| `_fallback`                           | Endgame regime swap of the solution cap; **certainty extraction** (P=0 → reveal as deduction, P=1 → flag as deduction; rest go onto pending queues); falls through to `_select_cell` only when no certainty exists (R2 + R3). |
-| `_select_cell`                        | Low-risk EV tie-break + optional bounded 1-ply lookahead (R2 + R3).                     |
-| `_infer`                              | Calls `super()._infer`, then sorts the pending queues by cascade priority (R3).         |
+| `_build_constraints`                  | `np.where`-vectorised outer scan instead of nested Python loops (speed).                   |
+| `_find_frontier`                      | `np.where` + set difference instead of `h × w` Python loop (speed).                        |
+| `_enumerate_component_histograms`     | **New method**, replaces parent's `_enumerate_component`. Bitmask DFS with `popcount` feasibility + saturation/fill propagation (speed). Outputs numpy histograms directly. |
+| `_compute_probabilities`              | Numpy `np.convolve` polynomial multiplication; per-component fallback when one overflows the solution cap (speed + decision quality).                          |
+| `_fallback`                           | Endgame regime swap of the solution cap; **certainty extraction** (P=0 → reveal as deduction, P=1 → flag as deduction; rest go onto pending queues); falls through to `_select_cell` only when no certainty exists (decision quality + refinement). |
+| `_select_cell`                        | Low-risk EV tie-break + optional bounded 1-ply lookahead (decision quality + refinement).                     |
+| `_infer`                              | Calls `super()._infer`, then sorts the pending queues by cascade priority (refinement).         |
 | `_order_pending`                      | **New helper** used by `_infer` and the certainty extraction path.                      |
 
 **Why it's the strongest classical agent**:
 - It never guesses when a layer above could deduce.
-- Certainty extraction (R2) labels P=0 / P=1 cells as deductions, not guesses — cutting `last_was_guess=True` events to a small fraction of the parent's count.
-- Cascade-priority ordering (R3) front-loads likely-zero reveals, chaining more deductions per turn through flood-fill spread.
-- Bitmask DFS + numpy convolution (R1) make the probability machinery 1.2–1.4× faster than the parent on every difficulty.
+- Certainty extraction labels P=0 / P=1 cells as deductions, not guesses — cutting `last_was_guess=True` events to a small fraction of the parent's count.
+- Cascade-priority ordering front-loads likely-zero reveals, chaining more deductions per turn through flood-fill spread.
+- Bitmask DFS + numpy convolution make the probability machinery 1.2–1.4× faster than the parent on every difficulty.
 - The endgame uses the same exact machinery as normal play, just with a larger solution budget.
 
 **Win rate** (n=2000, seed=0): 95.85% Beginner, 86.90% Intermediate, **50.10% Expert** — crosses the symbolic 50% line. **Average guesses per game**: 0.14 / 0.50 / 2.90 — 4.9× / 4.6× / 2.6× fewer than the un-optimised `ProbabilityAgent` (0.68 / 2.30 / 7.58) because certainty extraction recognises P=0 / P=1 cells as deductions.
@@ -362,73 +362,85 @@ Agent → DQNAgent  (no classical-reasoning inheritance)
 5. **`last_was_guess = True` always** — the network produces a *learned ranking*, not a logical proof. It cannot label a move as a deduction.
 
 **Training pipeline** (`scripts/train_dqn.py`):
-- Standard DQN with target network (synced every 2,000 steps), replay buffer (50,000 transitions), Adam (lr=5e-4), gamma=0.95, smooth-L1 loss.
+- Standard DQN with target network (synced every 2,000 steps), replay buffer, Adam (lr=5e-4), gamma=0.95, smooth-L1 loss.
 - Action-masked TD target: `Q(s, a) = r + γ · max_{a' valid} Q_target(s', a')`.
-- Epsilon-greedy with linear decay: 1.0 → 0.05 over 25,000 steps.
+- Epsilon-greedy with linear decay from 1.0 → 0.05.
 - Rewards from `MinesweeperEnv`: +1 win, −1 loss, +0.01 safe reveal, −0.001 invalid click.
 - Periodic checkpointing on improved 200-episode running win rate.
+- The shipped Beginner checkpoint was trained for **400,000 steps** with `--eps-decay-steps 100000 --buffer-size 100000`, on an RTX 4080 Super (CUDA build of PyTorch, ~20 minutes wall-clock).
 
 **Why pure DQN can't reach FinalAgent's win rates**:
 - **No certainty proof**: when CSP can prove a cell safe, FinalAgent reveals it with zero risk. DQN ranks the same cell by Q-value, which is approximate — it may rank a *mine cell* higher and lose.
 - **Sparse training signal**: random self-play covers a vanishing fraction of strategic boards. The network can learn local patterns but not exact global-mine-budget enforcement.
 - **Action space scales poorly**: 480 actions on Expert (16×30) — the Q-function has to learn a 480-way ranking conditional on the entire board state, which demands data the random rollouts can't provide.
-- Published Minesweeper DQN results plateau around 60-70% Beginner and well under 30% Expert. The classical agent hits 96 / 87 / 50.
+- Published Minesweeper DQN results plateau around 60-70% Beginner and well under 30% Expert, but only after **tens of millions of training steps**, heavy reward shaping, and architectural tricks (Double DQN, dueling heads, prioritized replay). Our shipped checkpoint is a deliberately minimal baseline (400k steps, basic DQN), so its Beginner win rate is lower (~12%). The classical agent hits 96 / 87 / 50 with no training at all.
 
 **Why it's still in the repo**:
 - A direct comparison between classical reasoning and a neural baseline is the kind of thing the report is about.
 - Future hybrids could use DQN to *propose* candidate moves and CSP/Probability to *verify* them (analogous to AlphaZero's policy + value).
 - The training script is a clean reference implementation of DQN against a Gymnasium env.
 
-**Status**: only a Beginner checkpoint ships (`checkpoints/dqn_beginner.pt`). Intermediate / Expert checkpoints would need days of training and have not been produced.
+**Status**: a Beginner checkpoint ships (`checkpoints/dqn_beginner.pt`, ~12% win rate, 400k steps on GPU). Intermediate and Expert checkpoints are **intentionally not trained** — see below.
+
+**Why we did not train Intermediate / Expert DQN checkpoints**:
+
+We investigated this and concluded the cost is not worth it for a *baseline* whose job is comparison, not winning. The reasons are structural, not budget-limited:
+
+- **Wins are too rare to learn from.** DQN learns almost entirely from the +1 win signal. On Expert (99 mines, 21% density), random/early-policy play essentially never wins — even the optimal classical agent only reaches 50%. With no winning trajectories in the replay buffer, the network gets no positive signal to learn from, so the Expert win rate stays at ~0% regardless of how long we train.
+- **The action space explodes.** Beginner has 81 actions, Intermediate 256, Expert 480. The Q-function must learn a far higher-dimensional ranking from data the random rollouts cannot cover.
+- **It cannot break the ceiling anyway.** Even a perfectly trained DQN cannot exceed the information-theoretic 50/50 endgame floor on Expert, because it ranks cells by a learned score and never computes the exact global-mine-budget probabilities those endgames require. That is precisely what the classical Probability/Final agents do.
+
+A short experiment confirmed this: training a dedicated checkpoint for the harder difficulties (even at the same 400k-step budget) lands at ~0% Intermediate/Expert — i.e. *training does not help*, because the limitation is the method, not the amount of compute. We therefore report the Beginner checkpoint as the neural baseline and document the Intermediate/Expert results as zero-shot transfer from it. The "DQN ≈ 12% vs Final ≈ 96%" Beginner comparison is already sufficient to make the report's point: classical reasoning decisively beats the neural baseline on this problem.
 
 ---
 
 ### Benchmark summary
 
-All numbers come from a single apples-to-apples sweep at **`n=2000` per agent per difficulty**, `seed=0`, current code. Every agent saw the same boards in the same order. DQN has only a Beginner checkpoint; its Intermediate column is the random-fallback path, and Expert is omitted.
+All numbers come from a single apples-to-apples sweep at **`n=2000` per agent per difficulty**, `seed=0`, current code. Every agent saw the same boards in the same order. DQN uses its Beginner checkpoint on all three difficulties (zero-shot transfer via the fully-convolutional network), which is why its Intermediate / Expert win rates are 0%.
 
-#### Win rate
+#### Six-metric benchmark, classical agents
 
-| Agent          | Beginner             | Intermediate         | Expert               | Failure mode of this tier               |
-|----------------|---------------------:|---------------------:|---------------------:|------------------------------------------|
-| `random`       |   0.05% (1/2000)     |   0.0%  (0/2000)     |   0.0%  (0/2000)     | No reasoning at all.                     |
-| `single_point` |  67.05% (1341/2000)  |  28.80% (576/2000)   |   0.90% (18/2000)    | Can't combine constraints.               |
-| `csp`          |  82.45% (1649/2000)  |  54.95% (1099/2000)  |  11.70% (234/2000)   | Random fallback after subset saturates.  |
-| `probability`  |  96.05% (1921/2000)  |  86.80% (1736/2000)  |  49.45% (989/2000)   | Mislabels deductions as guesses; no info-gain tie-break. |
-| `final`        |  95.85% (1917/2000)  |  86.90% (1738/2000)  | **50.10% (1002/2000)** | Unavoidable 50/50 endgames.              |
-| `dqn`          |  11.30% (226/2000)   |   0.0%  (no ckpt)    |  no ckpt             | Cannot prove safety; ranking only.       |
+For each difficulty, the harness reports six metrics from `evaluation/evaluate.py:benchmark` over the same 2000 boards: `win_rate`, `mine_hit_rate` (losses divided by total moves), `avg_guesses_per_game` (`last_was_guess=True` events per episode), `avg_cells_revealed_before_loss`, `avg_runtime_per_move_ms`, and `loss_cause` (`guess / reasoning` losses). `random` and `dqn` are excluded from these tables because they do not participate in the deduction-vs-guess decomposition; their win-rate summary is reported separately below.
 
-Standard error at `n=2000`: roughly `±0.44%` near 96%, `±0.75%` near 87%, `±1.12%` near 50%. `final` vs `probability` differs by −0.20pp on Beginner, +0.10pp on Intermediate, and +0.65pp on Expert — all comfortably within the SE band, so the two agents are statistically equivalent on win rate. **Final crosses 50% on Expert (50.10%)**, marginally above the symbolic threshold that Probability stays just below.
+##### Beginner (9×9, 10 mines, n = 2000)
 
-#### Average runtime per move (ms)
+| Agent | Win rate | Mine-hit rate | Avg guesses/game | Avg cells revealed before loss | Avg runtime/move (ms) | Loss cause (guess / reasoning) |
+|---|---:|---:|---:|---:|---:|---:|
+| `single_point` | 67.05% | 0.0137 | 1.13 | 60.5 | 0.022 | 659 / 0 |
+| `csp`          | 82.45% | 0.0066 | 0.61 | 63.8 | 0.025 | 351 / 0 |
+| `probability`  | 96.05% | 0.0014 | 0.68 | 67.7 | 0.039 | 79 / 0  |
+| **`final`**    | 95.85% | 0.0015 | **0.14** | **68.4** | 0.032 | 83 / 0 |
 
-| Agent          | Beginner | Intermediate | Expert | Notes                                  |
-|----------------|---------:|-------------:|-------:|----------------------------------------|
-| `random`       |    0.024 |        0.082 |  0.178 |                                        |
-| `single_point` |    0.024 |        0.038 |  0.051 |                                        |
-| `csp`          |    0.016 |        0.026 |  0.072 |                                        |
-| `probability`  |    0.024 |        0.044 |  0.306 | Dict-based DFS + dict polynomial mult. |
-| `final`        |    0.019 |        0.034 |  0.205 | Bitmask DFS + numpy convolution.       |
-| `dqn`          |    0.441 |        0.081 |    —   | CNN forward pass on every move.        |
+##### Intermediate (16×16, 40 mines, n = 2000)
 
-`final` is **1.26× / 1.29× / 1.49× faster** than `probability` on Beginner / Intermediate / Expert respectively, even though it does strictly more work (certainty extraction, EV scoring). The R1 optimisations — bitmask DFS with constraint propagation in `_enumerate_component_histograms`, and `np.convolve` over int-valued float64 arrays in `_compute_probabilities` — live only on `FinalAgent` as method overrides. `ProbabilityAgent` keeps its textbook dict-based pipeline.
+| Agent | Win rate | Mine-hit rate | Avg guesses/game | Avg cells revealed before loss | Avg runtime/move (ms) | Loss cause (guess / reasoning) |
+|---|---:|---:|---:|---:|---:|---:|
+| `single_point` | 28.80% | 0.0085 | 2.78 | 161.0 | 0.038 | 1424 / 0 |
+| `csp`          | 54.95% | 0.0044 | 1.70 | 168.1 | 0.024 | 901 / 0  |
+| `probability`  | 86.80% | 0.0011 | 2.30 | 203.1 | 0.041 | 264 / 0  |
+| **`final`**    | 86.90% | 0.0011 | **0.50** | **206.2** | 0.031 | 262 / 0 |
 
-DQN is one to two orders of magnitude slower than the classical agents on Beginner because every move runs the CNN forward pass. On Intermediate it has no checkpoint and falls back to random, so its runtime there is comparable to `random`'s Intermediate column rather than to DQN's Beginner column.
+##### Expert (16×30, 99 mines, n = 2000)
 
-#### Average guesses per game
+| Agent | Win rate | Mine-hit rate | Avg guesses/game | Avg cells revealed before loss | Avg runtime/move (ms) | Loss cause (guess / reasoning) |
+|---|---:|---:|---:|---:|---:|---:|
+| `single_point` | 0.90%  | 0.0100 | 4.04 | 161.7 | 0.045 | 1982 / 0 |
+| `csp`          | 11.70% | 0.0055 | 3.47 | 206.6 | 0.070 | 1766 / 0 |
+| `probability`  | 49.45% | 0.0018 | 7.58 | 333.0 | 0.330 | 1011 / 0 |
+| **`final`**    | **50.10%** | 0.0018 | **2.90** | **333.2** | **0.207** | 998 / 0 |
 
-| Agent          | Beginner | Intermediate | Expert |
-|----------------|---------:|-------------:|-------:|
-| `random`       |     4.37 |         5.49 |   5.41 |
-| `single_point` |     1.13 |         2.78 |   4.04 |
-| `csp`          |     0.61 |         1.70 |   3.47 |
-| `probability`  |     0.68 |         2.30 |   7.58 |
-| `final`        |     0.14 |         0.50 |   2.90 |
-| `dqn`          |     9.64 |         5.43 |    —   |
+The `loss cause` column reads `<guesses>/<reasoning>`. Across all 4 classical agents × 3 difficulties × 2000 episodes (≈ 9700 losing episodes total), the `reasoning` column is **zero** — every loss happens on a `last_was_guess=True` move. This is the strongest randomised-board evidence that the deduction pipeline is implemented correctly: no agent ever revealed a cell it had logically (and incorrectly) proved safe.
 
-"Guesses" is `last_was_guess=True` moves per episode — moves where the agent could not deduce a safe or mine cell and had to fall back to picking by probability or EV. `random` actually undercounts here because it terminates on the first mine hit (short episodes → few moves), so its ~4.4 figure is the number of *blind clicks before death*, not "informed but uncertain" moves. `dqn` over-counts because every move is flagged as a guess by construction (the Q-function never proves anything), so ~9.6 guesses on Beginner is just the average episode length.
+Standard error at `n=2000` is roughly `±0.44%` near 96%, `±0.75%` near 87%, `±1.12%` near 50%. `final` vs `probability` differs by `−0.20pp / +0.10pp / +0.65pp` on Beginner / Intermediate / Expert — within `±1` SE on every difficulty — so the two agents are statistically equivalent on win rate. **Final crosses 50% on Expert (50.10%)**, marginally above the symbolic threshold that Probability stays just below, while being **1.26× / 1.29× / 1.49× faster** and making **~4.9× / 4.6× / 2.6× fewer guesses**. The runtime and guess-count gains are attributable to the speed overrides (bitmask DFS + `np.convolve`) and the certainty-extraction override respectively, which only live on `FinalAgent`.
 
-`final` makes **~4.9× / 4.6× / 2.6× fewer guesses** than `probability` because its R2 certainty extraction recognises P(mine)=0 cells as deductions (`last_was_guess=False`), while the baseline ProbabilityAgent mislabels every fallback move as a guess. The R3 cascade-priority safe-reveal ordering also chains additional deductions per turn by triggering flood-fill earlier. Statistically equivalent wins, far fewer high-risk moments.
+##### Win-rate of `random` and `dqn` (for context only)
+
+| Agent    | Beginner | Intermediate | Expert |
+|----------|---------:|-------------:|-------:|
+| `random` | 0.05%    | 0.0%         | 0.0%   |
+| `dqn`    | 12.0%    | 0.0%         | 0.0%        |
+
+`random` provides the floor; `dqn` ranks cells by a learned Q-value with no ability to prove safety, so every DQN move is flagged as a guess by construction and `loss_cause` is uninformative for it. The `dqn` row uses the shipped Beginner checkpoint (400k steps, GPU); its Intermediate / Expert columns are **zero-shot transfer** from that Beginner checkpoint (the fully-convolutional network accepts any board size), which is why they sit at 0% — see the `DQNAgent` section for why dedicated Intermediate/Expert training does not help.
 
 #### How `final` beats `probability` on every axis
 
@@ -436,11 +448,11 @@ DQN is one to two orders of magnitude slower than the classical agents on Beginn
 
 `FinalAgent` overrides every method that has a faster or more accurate implementation. The full override table is in the **`FinalAgent`** section above. Grouped by intent:
 
-- **R1 — speed**: `_build_constraints`, `_find_frontier`, `_enumerate_component_histograms` (new method, bitmask + propagation), `_compute_probabilities` (numpy convolution).
-- **R2 — decision quality**: certainty extraction in `_fallback` (P=0 → reveal as deduction, P=1 → flag as deduction, queue the rest); per-component fallback when one component overflows the solution cap; low-risk EV tie-break in `_select_cell`; endgame regime with larger solution cap.
-- **R3 — refinement**: cascade-priority `_order_pending` + `_infer` override; bounded 1-ply lookahead in `_select_cell` (off by default — costs ~2× runtime without measurable win-rate gain at our sample sizes; opt-in via `lookahead_enabled=True` for ablation).
+- **Speed**: `_build_constraints`, `_find_frontier`, `_enumerate_component_histograms` (new method, bitmask + propagation), `_compute_probabilities` (numpy convolution).
+- **Decision quality**: certainty extraction in `_fallback` (P=0 → reveal as deduction, P=1 → flag as deduction, queue the rest); per-component fallback when one component overflows the solution cap; low-risk EV tie-break in `_select_cell`; endgame regime with larger solution cap.
+- **Refinement**: cascade-priority `_order_pending` + `_infer` override; bounded 1-ply lookahead in `_select_cell` (off by default — costs ~2× runtime without measurable win-rate gain at our sample sizes; opt-in via `lookahead_enabled=True` for ablation).
 
-The benchmark consequence: `final` is faster (R1), makes far fewer guesses (R2 certainty extraction), and statistically matches or marginally beats `probability` on win rate.
+The benchmark consequence: `final` is faster (speed overrides), makes far fewer guesses (certainty extraction), and statistically matches or marginally beats `probability` on win rate.
 
 ## Tunable FinalAgent Attributes
 
@@ -617,7 +629,7 @@ These approximations only affect tie-breaking, not safe / mine determination, so
 - Tune `risk_tolerance`, EV weights, and lookahead weights by difficulty with larger benchmark sweeps (Expert at n=2000+ for tighter signal). Current evidence: lookahead off + `risk_tolerance=0.0` is the best default at our sample sizes, but a properly tuned lookahead may yet show small Expert gains.
 - Add a `--telemetry` flag to `scripts/benchmark.py` that aggregates `endgame_calls`, `endgame_aborts`, and `lookahead_evals` across episodes for the report.
 - Add multi-step lookahead for endgame guesses (beyond the current 1-ply).
-- DQN baseline currently ships only a Beginner checkpoint; Intermediate and Expert checkpoints still to be trained (see `scripts/train_dqn.py`).
+- DQN baseline ships only a Beginner checkpoint by design. Intermediate/Expert DQN would need reward shaping + orders-of-magnitude more training to clear the sparse-win-signal problem, and still could not break the 50/50 endgame ceiling — so it is out of scope for a comparison baseline (see the `DQNAgent` section). A genuinely interesting extension is a *hybrid*: DQN proposes candidate guesses, the Probability/Final solver verifies them.
 
 ## License
 

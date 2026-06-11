@@ -5,7 +5,7 @@ intentionally kept as the textbook baselines they were originally written
 as — pure inheritance baselines, easy to read. FinalAgent overrides their
 methods with the optimized implementations:
 
-R1 (speed)
+Speed
   - vectorized `_build_constraints` (np.where instead of nested python loops)
   - vectorized `_find_frontier`
   - bitmask DFS `_enumerate_component_histograms` with constraint
@@ -14,7 +14,7 @@ R1 (speed)
   - numpy histogram convolution in `_compute_probabilities` (replaces the
     dict-based polynomial multiplication)
 
-R2 (decision quality)
+Decision quality
   - certainty extraction in `_fallback`: P(mine)=0 cells become deduced
     reveals (last_was_guess=False) and P(mine)=1 cells become deduced flags
   - per-component fallback: if one frontier component overflows the
@@ -24,7 +24,7 @@ R2 (decision quality)
     p_zero proxy / unrevealed-neighbour count blended)
   - endgame regime: when few cells remain, swap to a larger solution cap
 
-R3 (refinement)
+Refinement
   - cascade-priority `_order_pending` sort so likely-zero reveals trigger
     flood-fill first and unlock the most downstream deductions
   - bounded 1-ply lookahead in `_select_cell` (opt-in via lookahead_enabled)
@@ -153,7 +153,7 @@ class FinalAgent(ProbabilityAgent):
         return super(ProbabilityAgent, self).act(view)
 
     # ------------------------------------------------------------------
-    # R1 / R2: vectorized constraint + frontier construction
+    # speed / decision quality: vectorized constraint + frontier construction
     # ------------------------------------------------------------------
     def _build_constraints(self, view: np.ndarray) -> list[Constraint]:
         """Override CSPAgent._build_constraints with a numpy-vectorised scan
@@ -183,7 +183,7 @@ class FinalAgent(ProbabilityAgent):
     def _find_frontier(
         self, view: np.ndarray, constraints: list[Constraint]
     ) -> tuple[set[Cell], set[Cell]]:
-        """Vectorised frontier / off-frontier split (R2)."""
+        """Vectorised frontier / off-frontier split (speed)."""
         frontier: set[Cell] = set()
         for con in constraints:
             frontier.update(con.cells)
@@ -193,7 +193,7 @@ class FinalAgent(ProbabilityAgent):
         return frontier, off_frontier
 
     # ------------------------------------------------------------------
-    # R3: cascade-priority ordering of deduced safes / mines
+    # refinement: cascade-priority ordering of deduced safes / mines
     # ------------------------------------------------------------------
     def _infer(self, view: np.ndarray) -> None:
         """Run CSPAgent._infer, then reorder the deduced queues by cascade
@@ -234,7 +234,7 @@ class FinalAgent(ProbabilityAgent):
         return sorted(cells, key=priority)
 
     # ------------------------------------------------------------------
-    # R1: bitmask DFS enumeration with constraint propagation
+    # speed: bitmask DFS enumeration with constraint propagation
     # ------------------------------------------------------------------
     def _enumerate_component_histograms(
         self, component: Component
@@ -372,7 +372,7 @@ class FinalAgent(ProbabilityAgent):
         return ordered_cells, h_total, [h_per_cell[j] for j in range(n)]
 
     # ------------------------------------------------------------------
-    # R1 + R2: numpy convolution + per-component fallback
+    # speed + decision quality: numpy convolution + per-component fallback
     # ------------------------------------------------------------------
     def _compute_probabilities(
         self,
@@ -386,7 +386,7 @@ class FinalAgent(ProbabilityAgent):
         - Per-component enumeration uses the bitmask DFS via
           `_enumerate_component_histograms` (returns numpy histograms
           directly).
-        - Per-component fallback (R2 MAJOR-3): if one component aborts
+        - Per-component fallback (decision quality): if one component aborts
           enumeration, its cells fold into off-frontier rather than
           poisoning the entire turn.
         - Polynomial multiplication uses `np.convolve` over float64
@@ -481,7 +481,7 @@ class FinalAgent(ProbabilityAgent):
         return probs
 
     # ------------------------------------------------------------------
-    # R2: certainty extraction + R3 endgame regime
+    # decision quality: certainty extraction + endgame regime
     # ------------------------------------------------------------------
     def _fallback(self, view: np.ndarray):
         """Run the probability pipeline with FinalAgent's optimised
@@ -513,7 +513,7 @@ class FinalAgent(ProbabilityAgent):
 
             self.last_probabilities = probabilities
 
-            # R2 certainty extraction: P=0 cells are deduced safes,
+            # certainty extraction: P=0 cells are deduced safes,
             # P=1 cells are deduced mines. They are NOT guesses.
             certain_safes: list[Cell] = []
             certain_mines: list[Cell] = []
@@ -610,7 +610,7 @@ class FinalAgent(ProbabilityAgent):
         return action
 
     # ------------------------------------------------------------------
-    # R2 EV tie-break + R3 bounded 1-ply lookahead
+    # decision quality: EV tie-break + bounded 1-ply lookahead
     # ------------------------------------------------------------------
     def _select_cell(self, probabilities, frontier_cells):
         """Select a low-risk cell using a local expected-value tie-break,
